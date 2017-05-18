@@ -51,60 +51,83 @@ end
 
 function RefreshAccount (account, since)
     local datePattern = "(%d+)%.(%d+)%.(%d+).*%s(%d+):(%d+)"
-    
-    if string.sub(account.accountNumber, -1) == '1' then
-        local list = HTML(connection:request("POST",
-        "https://www.mintos.com/en/account-statement/list",
-        "account_statement_filter[fromDate]=" .. os.date("%d.%m.%Y", since) .. "&account_statement_filter[toDate]=" .. os.date("%d.%m.%Y", os.time()) .. "",
-        "application/x-www-form-urlencoded; charset=UTF-8"))
 
-        local balance = list:xpath('//*[@id="overview-details"]/table/tbody/tr[last()]/td[1]/span[2]'):text()
+    if string.sub(account.accountNumber, -1) == '1' then
+        local html = HTML(connection:get("https://www.mintos.com/en/overview/"))
+
+        local balance = tonumber(string.match(html:xpath('//*[@class="overview-box"][1]/div/table/tr[1]/td[2]'):text(), ".*%s(%d+%.%d+).*"))
 
         local transactions = {}
+        local oneMonth = 4*7*24*60*60
 
-        list:xpath('//*[@id="overview-details"]/table/tbody/tr[not(@class)]'):each(function (index, element)
-            local dateString = element:xpath('.//*[@class="m-transaction-date"]'):attr('title')
-            local day, month, year, hour, min = dateString:match(datePattern)
+        local toDate = since + oneMonth
+        while toDate < os.time() do
 
-            local purpose = element:xpath('.//*[@class="m-transaction-details"]'):text()
+            print("Getting transactions from " .. os.date("%d.%m.%Y", since) .. " to " .. os.date("%d.%m.%Y", toDate))
 
-            local amount = element:xpath('.//*[contains(concat(" ", normalize-space(@class), " "), " m-transaction-amount ")]'):text()
+            local list = HTML(connection:request("POST",
+            "https://www.mintos.com/en/account-statement/list",
+            "account_statement_filter[fromDate]=" .. os.date("%d.%m.%Y", since) .. "&account_statement_filter[toDate]=" .. os.date("%d.%m.%Y", toDate) .. "",
+            "application/x-www-form-urlencoded; charset=UTF-8"))
 
-            local transaction = {
-                bookingDate = os.time({day=day,month=month,year=year,hour=hour,min=min}),
-                purpose = purpose,
-                amount = tonumber(amount)
-            }
-            table.insert(transactions, transaction)
-        end)
+            list:xpath('//*[@id="overview-details"]/table/tbody/tr[not(@class)]'):each(function (index, element)
+                local dateString = element:xpath('.//*[@class="m-transaction-date"]'):attr('title')
+                local day, month, year, hour, min = dateString:match(datePattern)
+
+                local purpose = element:xpath('.//*[@class="m-transaction-details"]'):text()
+
+                local amount = element:xpath('.//*[contains(concat(" ", normalize-space(@class), " "), " m-transaction-amount ")]'):text()
+
+                local transaction = {
+                    bookingDate = os.time({day=day,month=month,year=year,hour=hour,min=min}),
+                    purpose = purpose,
+                    amount = tonumber(amount)
+                }
+                table.insert(transactions, transaction)
+            end)
+            since = toDate - 24*60*60
+            toDate = toDate + oneMonth
+        end
 
         return {
             balance = balance,
             transactions = transactions
         }
     else
-        local list = HTML(connection:request("POST",
-        "https://www.mintos.com/en/my-investments/list",
-        "statuses%5B%5D=256&statuses%5B%5D=512&statuses%5B%5D=1024&statuses%5B%5D=2048&statuses%5B%5D=8192&statuses%5B%5D=16384&max_results=100&page=1",
-        "application/x-www-form-urlencoded; charset=UTF-8"))
-        
+
+        local page = 1
+        local total = 1000
+        local showing = 0
+
         local securities = {}
 
-        list:xpath('//*[@id="investor-investments-table"]/tbody/tr[not(contains(@class, "total-row"))]'):each(function (index, element)
-            local dateOfPurchaseString = element:xpath('.//*[contains(concat(" ", normalize-space(@class), " "), " m-loan-issued ")]'):attr('title')
-            local day, month, year, hour, min = dateOfPurchaseString:match(datePattern)
-            
-            local name = element:xpath('.//*[contains(concat(" ", normalize-space(@class), " "), " m-loan-id ")]'):text()
-            local price = string.match(element:xpath('.//*[@data-m-label="Outstanding Principal"]'):text(), ".*%s(%d+%.%d+).*")
-            
-            local security = {
-                dateOfPurchase = os.time({day=day,month=month,year=year,hour=hour,min=min}),
-                name = name,
-                currency = 'EUR',
-                amount = tonumber(price)
-            }
-            table.insert(securities, security)
-        end)
+        while showing < total do
+            local list = HTML(connection:request("POST",
+            "https://www.mintos.com/en/my-investments/list",
+            "statuses%5B%5D=256&statuses%5B%5D=512&statuses%5B%5D=1024&statuses%5B%5D=2048&statuses%5B%5D=8192&statuses%5B%5D=16384&max_results=100&page=" .. page,
+            "application/x-www-form-urlencoded; charset=UTF-8"))
+
+
+            list:xpath('//*[@id="investor-investments-table"]/tbody/tr[not(contains(@class, "total-row"))]'):each(function (index, element)
+                local dateOfPurchaseString = element:xpath('.//*[contains(concat(" ", normalize-space(@class), " "), " m-loan-issued ")]'):attr('title')
+                local day, month, year, hour, min = dateOfPurchaseString:match(datePattern)
+
+                local name = element:xpath('.//*[contains(concat(" ", normalize-space(@class), " "), " m-loan-id ")]'):text()
+                local price = string.match(element:xpath('.//*[@data-m-label="Outstanding Principal"]'):text(), ".*%s(%d+%.%d+).*")
+
+                local security = {
+                    dateOfPurchase = os.time({day=day,month=month,year=year,hour=hour,min=min}),
+                    name = name,
+                    currency = 'EUR',
+                    amount = tonumber(price)
+                }
+                table.insert(securities, security)
+            end)
+
+            showing = list:xpath('//*[@id="result-status"]/span[@class="to"]'):text()
+            total = list:xpath('//*[@id="result-status"]/span[@class="total"]'):text()
+            page = page + 1
+        end
 
         return {securities = securities}
     end
