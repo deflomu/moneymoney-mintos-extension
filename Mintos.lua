@@ -111,7 +111,7 @@ function RefreshAccount (account, since)
         while page < total do
             local list = JSON(connection:request("POST",
             "https://www.mintos.com/en/my-investments/list",
-            "statuses%5B%5D=256&statuses%5B%5D=512&statuses%5B%5D=1024&statuses%5B%5D=2048&statuses%5B%5D=8192&statuses%5B%5D=16384&max_results=100&page=" .. page,
+            "currency=978&+=978&with_buyback=&statuses%5B%5D=256&statuses%5B%5D=512&statuses%5B%5D=1024&statuses%5B%5D=2048&statuses%5B%5D=8192&statuses%5B%5D=16384&purchased_from=&purchased_till=&listed_for_sale_status=&min_interest=&max_interest=&min_term=&max_term=&min_ltv=&max_ltv=&loan_id=&sort_field=&sort_order=DESC&max_results=100&page=" .. page,
             "application/x-www-form-urlencoded; charset=UTF-8")):dictionary()
 
             for j, element in ipairs(list["data"]["result"]["investments"]) do
@@ -120,12 +120,11 @@ function RefreshAccount (account, since)
 
                 local name = element["loan"]["identifier"]
                 local price = element["amount"]
-				local type = element["loan"]["type"]
-				local groupIdentifier = element["loan"]["groupIdentifier"]
+		local type = element["loan"]["type"]
 
                 local security = {
                     dateOfPurchase = os.time({day=day,month=month,year=year,hour=hour,min=min}),
-                    name = type .. " - " .. groupIdentifier .. " - " .. name,
+                    name = type .. " - " .. name,
                     currency = 'EUR',
                     amount = tonumber(price)
                 }
