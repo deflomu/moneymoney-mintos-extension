@@ -1,5 +1,5 @@
 WebBanking {
-    version = 1.2,
+    version = 1.3,
     url = "https://www.mintos.com/",
     services = { "Mintos Account" }
 }
