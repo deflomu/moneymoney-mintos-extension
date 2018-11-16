@@ -112,7 +112,7 @@ function RefreshAccount (account, since)
             local list = JSON(connection:request("POST",
             "https://www.mintos.com/en/my-investments/list",
             "currency=978&sort_order=DESC&max_results=100&page=" .. page,
-	    "application/x-www-form-urlencoded; charset=UTF-8")):dictionary()
+            "application/x-www-form-urlencoded; charset=UTF-8")):dictionary()
 
             for j, element in ipairs(list["data"]["result"]["investments"]) do
                 local dateOfPurchaseString = element["createdAt"]
