@@ -4,16 +4,14 @@ WebBanking {
     services = { "Mintos Account" }
 }
 
-maxStatementsPerPage = 300
-
-datePattern = "(%d+)%.(%d+)%.(%d+)"
+MAX_STATEMENTS_PER_PAGE = 300
+MINTOS_DATE_PATTERN = "(%d+)%.(%d+)%.(%d+)"
 
 function SupportsBank (protocol, bankCode)
     return protocol == ProtocolWebBanking and bankCode == "Mintos Account"
 end
 
 local function loginWithPassword (username, password)
-    connection = Connection()
     local html = HTML(connection:get(url))
     local csrfToken = html:xpath("//input[@name='_csrf_token']"):val()
 
@@ -59,6 +57,7 @@ local function sendTwoFactorCode (twoFactorCode)
 end
 
 function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
+    connection = Connection()
     if step == 1 then
         local username = credentials[1]
         local password = credentials[2]
@@ -99,7 +98,7 @@ end
 
 local function parseStatements (receivedStatements)
     for i, element in ipairs(receivedStatements) do
-        local day, month, year = element["date"]:match(datePattern)
+        local day, month, year = element["date"]:match(MINTOS_DATE_PATTERN)
 
         local purpose = element["details"]
         local amount = element["turnover"]
@@ -121,12 +120,13 @@ local function getStatementsForPage (since, page)
     table.concat({
         "account_statement_filter[fromDate]=" .. os.date("%d.%m.%Y", since),
         "account_statement_filter[toDate]=" .. os.date("%d.%m.%Y", os.time()),
-        "account_statement_filter[maxResults]=".. maxStatementsPerPage,
+        "account_statement_filter[maxResults]=".. MAX_STATEMENTS_PER_PAGE,
         "account_statement_filter[currency]=978",
         "account_statement_filter[page]=" .. page
     }, "&"),
     "application/x-www-form-urlencoded; charset=UTF-8",
     {
+        ["Accept"] = "application/json",
         ["x-requested-with"] = "XMLHttpRequest"
     })):dictionary()
 
@@ -141,9 +141,12 @@ local function refreshAvailableFunds (since)
     table.concat({
         "account_statement_filter[fromDate]=" .. os.date("%d.%m.%Y", since),
         "account_statement_filter[toDate]=" .. os.date("%d.%m.%Y", os.time()),
-        "account_statement_filter[maxResults]=".. maxStatementsPerPage
+        "account_statement_filter[maxResults]=".. MAX_STATEMENTS_PER_PAGE
     }, "&"),
-    "application/x-www-form-urlencoded; charset=UTF-8")):dictionary()
+    "application/x-www-form-urlencoded; charset=UTF-8",
+    {
+        ["Accept"] = "application/json",
+    })):dictionary()
 
     local balance = json["data"]["summary"]["finalBalance"]
     local total = json["data"]["summary"]["total"]
@@ -193,10 +196,13 @@ local function refreshInvestedFunds (since)
             "max_results=100", 
             "page=" .. page
         }, "&"),
-        "application/x-www-form-urlencoded; charset=UTF-8")):dictionary()
+        "application/x-www-form-urlencoded; charset=UTF-8",
+        {
+            ["Accept"] = "application/json",
+        })):dictionary()
 
         for j, element in ipairs(json["data"]["result"]["investments"]) do
-            local day, month, year = element["createdAt"]:match(datePattern)
+            local day, month, year = element["createdAt"]:match(MINTOS_DATE_PATTERN)
 
             local name = element["loan"]["identifier"]
             local price = element["amount"]
@@ -233,3 +239,4 @@ function EndSession ()
     connection:get(logoutLink)
     return nil
 end
+
