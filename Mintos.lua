@@ -100,13 +100,13 @@ local function parseStatements (receivedStatements)
     for i, element in ipairs(receivedStatements) do
         local day, month, year = element["date"]:match(MINTOS_DATE_PATTERN)
 
-        local purpose = element["details"]
-        local amount = element["turnover"]
+        local details = element["details"]
+        local turnover = element["turnover"]
 
         local transaction = {
             bookingDate = os.time({day=day,month=month,year=year,hour=0,min=0}),
-            purpose = extractPurpose(purpose),
-            amount = tonumber(amount)
+            purpose = extractPurpose(details),
+            amount = tonumber(turnover)
         }
 
         table.insert(transactions, transaction)
