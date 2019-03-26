@@ -102,7 +102,6 @@ local function parseStatements (receivedStatements)
 
         local purpose = element["details"]
         local amount = element["turnover"]
-        local transactionId = element["transactionId"]
 
         local transaction = {
             bookingDate = os.time({day=day,month=month,year=year,hour=0,min=0}),
