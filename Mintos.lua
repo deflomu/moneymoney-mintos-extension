@@ -4,24 +4,67 @@ WebBanking {
     services = { "Mintos Account" }
 }
 
-local connection
+MAX_STATEMENTS_PER_PAGE = 300
+MINTOS_DATE_PATTERN = "(%d+)%.(%d+)%.(%d+)"
 
 function SupportsBank (protocol, bankCode)
     return protocol == ProtocolWebBanking and bankCode == "Mintos Account"
 end
 
-function InitializeSession (protocol, bankCode, username, username2, password, username3)
-    connection = Connection()
+local function loginWithPassword (username, password)
     local html = HTML(connection:get(url))
-    local csrfToken = html:xpath("//*[@id='login-form']/input[@name='_csrf_token']"):val()
+    local csrfToken = html:xpath("//input[@name='_csrf_token']"):val()
 
-    content, charset, mimeType = connection:request("POST",
+    -- content might be used to get CSRF token to send two factor code in
+    -- sendTwoFactorCode
+    content = connection:request("POST",
     "https://www.mintos.com/en/login/check",
-    "_username=" .. username .. "&_password=" .. password .. "&_csrf_token=" .. csrfToken,
+    table.concat({
+        "_username=" .. username,
+        "_password=" .. password,
+        "_csrf_token=" .. csrfToken
+    }, "&"),
     "application/x-www-form-urlencoded; charset=UTF-8")
 
-    if string.match(connection:getBaseURL(), 'login') then
+    if string.match(connection:getBaseURL(), "twofactor") then
+        return {
+            title = "Two-factor authentication",
+            challenge = "Enter the two-factor authentication code provided by the Authenticator app.",
+            label = "6-digit code"
+        }
+    end
+
+    if string.match(connection:getBaseURL(), "login") then
         return LoginFailed
+    end
+end
+
+local function sendTwoFactorCode (twoFactorCode)
+    local html = HTML(content)
+    local csrfToken = html:xpath("//input[@name='_csrf_token']"):val()
+
+    connection:request("POST",
+    "https://www.mintos.com/en/login/twofactor",
+    table.concat({
+        "_one_time_password=" .. code,
+        "_csrf_token=" .. csrfToken
+    }, "&"),
+    "application/x-www-form-urlencoded; charset=UTF-8")
+
+    if string.match(connection:getBaseURL(), "login") then
+        return LoginFailed
+    end
+end
+
+function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
+    connection = Connection()
+    if step == 1 then
+        local username = credentials[1]
+        local password = credentials[2]
+        loginWithPassword(username, password)
+    elseif step == 2 then
+        local twoFactorCode = credentials[1]
+        sendTwoFactorCode(twoFactorCode)
     end
 end
 
@@ -29,145 +72,170 @@ function ListAccounts (knownAccounts)
     local html = HTML(connection:get("https://www.mintos.com/en/my-settings/"))
     local accountNumber = html:xpath("//*/table[contains(concat(' ', normalize-space(@class), ' '), ' js-investor-settings ')]/tr[1]/td[@class='data']"):text()
 
-    local accounts = {}
-
-    table.insert(accounts, {
-        name = 'Available Funds',
-        accountNumber = accountNumber .. '-1',
-        currency = "EUR",
-        type = AccountTypeGiro
-    })
-
-    table.insert(accounts, {
-        name = 'Invested Funds',
-        accountNumber = accountNumber .. '-2',
-        currency = "EUR",
-        portfolio = true,
-        type = AccountTypePortfolio
-    })
-
-    return accounts
+    return {
+        {
+            name = "Available Funds",
+            accountNumber = accountNumber .. "-1",
+            currency = "EUR",
+            type = AccountTypeGiro
+        }, {
+            name = "Invested Funds",
+            accountNumber = accountNumber .. "-2",
+            currency = "EUR",
+            portfolio = true,
+            type = AccountTypePortfolio
+        }
+    }
 end
 
-function RefreshAccount (account, since)
-    local datePattern = "(%d+)%.(%d+)%.(%d+)"
+local function extractPurpose (text)
+    -- remove all html tags
+    text = string.gsub(text, "(%b<>)", "")
+    -- add newline after transaction id
+    text = string.gsub(text, " %- ", "\n", 1)
+    return text
+end
 
-    if string.sub(account.accountNumber, -1) == '1' then
-        local html = HTML(connection:get("https://www.mintos.com/en/overview/"))
+local function parseStatements (receivedStatements)
+    for i, element in ipairs(receivedStatements) do
+        local day, month, year = element["date"]:match(MINTOS_DATE_PATTERN)
 
-        local balance = tonumber(string.match(html:xpath('//*[@class="overview-box"][1]/div/table/tr[1]/td[2]'):text(), ".*%s(%d+%.%d+).*"))
+        local details = element["details"]
+        local turnover = element["turnover"]
 
-        local transactions = {}
-		local oneDay = (24*60*60)
-        local oneMonth = 4*7*24*60*60
-
-
-        local toDate = since + oneMonth
-
-        while toDate <= os.time() do
-            print("Getting transactions from " .. os.date("%d.%m.%Y", since) .. " to " .. os.date("%d.%m.%Y", toDate+oneDay))
-
-            local list = JSON(connection:request("POST",
-            "https://www.mintos.com/en/account-statement/list",
-            "account_statement_filter[fromDate]=" .. os.date("%d.%m.%Y", since) .. "&account_statement_filter[toDate]=" .. os.date("%d.%m.%Y", toDate+oneDay) .. "",
-            "application/x-www-form-urlencoded; charset=UTF-8; Accept:text/html")):dictionary()
-
-			if list["data"]["summary"]["total"]>0 then
-			for i, element in ipairs(list["data"]["summary"]["accountStatements"]) do
-			
-			   local dateString = element["date"]
-               local day, month, year = dateString:match(datePattern)
-
-               local purpose = element["details"]
-
-               local amount = element["turnover"]
-
-               local transaction = {
-                   bookingDate = os.time({day=day,month=month,year=year,hour=0,min=0}),
-                   purpose = StripHtml(purpose),
-                   amount = tonumber(amount)
-               }
-               table.insert(transactions, transaction)
-			end
-			end
-
-            since = toDate + oneDay
-            toDate = toDate + oneMonth
-        end
-
-
-
-        return {
-            balance = balance,
-            transactions = transactions
+        local transaction = {
+            bookingDate = os.time({day=day,month=month,year=year,hour=0,min=0}),
+            purpose = extractPurpose(details),
+            amount = tonumber(turnover)
         }
-    else
 
-        local page = 1
-        local total = 1000
-
-        local securities = {}
-
-        while page <= total do
-            local list = JSON(connection:request("POST",
-            "https://www.mintos.com/en/my-investments/list",
-            "currency=978&sort_order=DESC&max_results=100&page=" .. page,
-            "application/x-www-form-urlencoded; charset=UTF-8")):dictionary()
-
-            for j, element in ipairs(list["data"]["result"]["investments"]) do
-                local dateOfPurchaseString = element["createdAt"]
-                local day, month, year, hour, min = dateOfPurchaseString:match(datePattern)
-
-                local name = element["loan"]["identifier"]
-                local price = element["amount"]
-		local type = element["loan"]["type"]
-
-                local security = {
-                    dateOfPurchase = os.time({day=day,month=month,year=year,hour=hour,min=min}),
-                    name = type .. " - " .. name,
-                    currency = 'EUR',
-                    amount = tonumber(price)
-                }
-                table.insert(securities, security)
-            end
-
-            total = list["data"]["result"]["totalPages"]
-            page = list["data"]["result"]["pagination"]["currentPage"] + 1
-        end
-
-        return {securities = securities}
+        table.insert(transactions, transaction)
     end
 end
 
-function StripHtml (t)
-	local cleaner = {
-		{ "&amp;", "&" }, -- decode ampersands
-		{ "&#151;", "-" }, -- em dash
-		{ "&#146;", "'" }, -- right single quote
-		{ "&#147;", "\"" }, -- left double quote
-		{ "&#148;", "\"" }, -- right double quote
-		{ "&#150;", "-" }, -- en dash
-		{ "&#160;", " " }, -- non-breaking space
-		{ "<br ?/?>", "\n" }, -- all <br> tags whether terminated or not (<br> <br/> <br />) become new lines
-		{ "</p>", "\n" }, -- ends of paragraphs become new lines
-		{ "(%b<>)", "" }, -- all other html elements are completely removed (must be done last)
-		{ "\r", "\n" }, -- return carriage become new lines
-		{ "[\n\n]+", "\n" }, -- reduce all multiple new lines with a single new line
-		{ "^\n*", "" }, -- trim new lines from the start...
-		{ "\n*$", "" }, -- ... and end
-	}
+local function getStatementsForPage (since, page)
+    local json = JSON(connection:request("POST",
+    "https://www.mintos.com/en/account-statement/page/",
+    table.concat({
+        "account_statement_filter[fromDate]=" .. os.date("%d.%m.%Y", since),
+        "account_statement_filter[toDate]=" .. os.date("%d.%m.%Y", os.time()),
+        "account_statement_filter[maxResults]=".. MAX_STATEMENTS_PER_PAGE,
+        "account_statement_filter[currency]=978",
+        "account_statement_filter[page]=" .. page
+    }, "&"),
+    "application/x-www-form-urlencoded; charset=UTF-8",
+    {
+        ["Accept"] = "application/json",
+        ["x-requested-with"] = "XMLHttpRequest"
+    })):dictionary()
 
-	-- clean html from the string
-	for i=1, #cleaner do
-		local cleans = cleaner[i]
-		t = string.gsub( t, cleans[1], cleans[2] )
-	end
+    return json["data"]["accountStatements"]
+end
 
-	return t
+local function refreshAvailableFunds (since)
+    transactions = {}
+
+    local json = JSON(connection:request("POST",
+    "https://www.mintos.com/en/account-statement/list",
+    table.concat({
+        "account_statement_filter[fromDate]=" .. os.date("%d.%m.%Y", since),
+        "account_statement_filter[toDate]=" .. os.date("%d.%m.%Y", os.time()),
+        "account_statement_filter[maxResults]=".. MAX_STATEMENTS_PER_PAGE
+    }, "&"),
+    "application/x-www-form-urlencoded; charset=UTF-8",
+    {
+        ["Accept"] = "application/json",
+    })):dictionary()
+
+    local balance = json["data"]["summary"]["finalBalance"]
+    local total = json["data"]["summary"]["total"]
+    local page = 1
+
+    print("Found " .. total .. " transactions in total")
+
+    local receivedStatements = json["data"]["summary"]["accountStatements"]
+
+    parseStatements(receivedStatements)
+
+    local remaining = total - #receivedStatements
+
+    print("Received " .. #receivedStatements .. " statements. " .. remaining .. " remaining")
+
+    while remaining > 0 do
+        page = page + 1
+        receivedStatements = getStatementsForPage(since, page)
+
+        if #receivedStatements == 0 then
+            error("Received no more statements but " .. remaining .. " still missing.")
+        end
+
+        parseStatements(receivedStatements)
+        remaining = remaining - #receivedStatements
+        print("Received " .. #receivedStatements .. " statements. " .. remaining .. " remaining")
+    end
+
+    return {
+        balance = balance,
+        transactions = transactions
+    }
+end
+
+local function refreshInvestedFunds (since)
+    local page = 1
+    local totalPages = 1000
+
+    local securities = {}
+
+    while page <= totalPages do
+        local json = JSON(connection:request("POST",
+        "https://www.mintos.com/en/my-investments/list",
+        table.concat({
+            "currency=978",
+            "sort_order=DESC",
+            "max_results=100", 
+            "page=" .. page
+        }, "&"),
+        "application/x-www-form-urlencoded; charset=UTF-8",
+        {
+            ["Accept"] = "application/json",
+        })):dictionary()
+
+        for j, element in ipairs(json["data"]["result"]["investments"]) do
+            local day, month, year = element["createdAt"]:match(MINTOS_DATE_PATTERN)
+
+            local name = element["loan"]["identifier"]
+            local price = element["amount"]
+            local type = element["loan"]["type"]
+
+            local security = {
+                dateOfPurchase = os.time({day=day,month=month,year=year,hour=0,min=0}),
+                name = type .. " - " .. name,
+                currency = "EUR",
+                amount = tonumber(price)
+            }
+            table.insert(securities, security)
+        end
+
+        totalPages = json["data"]["result"]["totalPages"]
+        page = page + 1
+    end
+
+    return {
+        securities = securities
+    }
+end
+
+function RefreshAccount (account, since)
+    if account.type == AccountTypeGiro then 
+        return refreshAvailableFunds(since)
+    else
+        return refreshInvestedFunds(since)
+    end
 end
 
 function EndSession ()
-    connection:get("https://www.mintos.com/")
-    connection:get("https://www.mintos.com/en/logout")
+    local logoutLink = HTML(content):xpath("//a[contains(@class,'logout')]"):attr("href")
+    connection:get(logoutLink)
     return nil
 end
+
