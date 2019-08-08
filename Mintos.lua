@@ -13,7 +13,7 @@ end
 
 local function loginWithPassword (username, password)
     local html = HTML(connection:get(url))
-    local csrfToken = html:xpath("//input[@name='_csrf_token']"):val()
+    local csrfToken = html:xpath("//login-form"):attr("token")
 
     -- content might be used to get CSRF token to send two factor code in
     -- sendTwoFactorCode
