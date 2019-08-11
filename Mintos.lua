@@ -1,7 +1,8 @@
 WebBanking {
     version = 1.7,
     url = "https://www.mintos.com/en/login",
-    services = { "Mintos Account" }
+    services = { "Mintos Account" },
+    description = "Guthaben und Investments von mintos.com anzeigen"
 }
 
 MAX_STATEMENTS_PER_PAGE = 300
