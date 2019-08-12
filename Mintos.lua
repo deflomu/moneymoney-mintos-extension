@@ -1,5 +1,5 @@
 WebBanking {
-    version = 1.7,
+    version = 1.8,
     url = "https://www.mintos.com/en/login",
     services = { "Mintos Account" },
     description = "Guthaben und Investments von mintos.com anzeigen"
