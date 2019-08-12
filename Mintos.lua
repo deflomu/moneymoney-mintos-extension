@@ -11,6 +11,8 @@ function SupportsBank (protocol, bankCode)
     return protocol == ProtocolWebBanking and bankCode == "Mintos Account"
 end
 
+local connection = Connection()
+
 local function loginWithPassword (username, password)
     local html = HTML(connection:get(url))
     local csrfToken = html:xpath("//login-form"):attr("token")
@@ -37,16 +39,19 @@ local function loginWithPassword (username, password)
     if string.match(connection:getBaseURL(), "login") then
         return LoginFailed
     end
+
+    -- successful
+    return nil
 end
 
 local function sendTwoFactorCode (twoFactorCode)
     local html = HTML(content)
     local csrfToken = html:xpath("//input[@name='_csrf_token']"):val()
 
-    connection:request("POST",
+    content = connection:request("POST",
     "https://www.mintos.com/en/login/twofactor",
     table.concat({
-        "_one_time_password=" .. code,
+        "_one_time_password=" .. twoFactorCode,
         "_csrf_token=" .. csrfToken
     }, "&"),
     "application/x-www-form-urlencoded; charset=UTF-8")
@@ -54,17 +59,19 @@ local function sendTwoFactorCode (twoFactorCode)
     if string.match(connection:getBaseURL(), "login") then
         return LoginFailed
     end
+
+    -- successful
+    return nil
 end
 
 function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
-    connection = Connection()
     if step == 1 then
         local username = credentials[1]
         local password = credentials[2]
-        loginWithPassword(username, password)
+        return loginWithPassword(username, password)
     elseif step == 2 then
         local twoFactorCode = credentials[1]
-        sendTwoFactorCode(twoFactorCode)
+        return sendTwoFactorCode(twoFactorCode)
     end
 end
 
@@ -114,6 +121,8 @@ local function parseStatements (receivedStatements)
 end
 
 local function getStatementsForPage (since, page)
+    print("Getting statements since ".. since .. " page ".. page)
+
     local json = JSON(connection:request("POST",
     "https://www.mintos.com/en/account-statement/page/",
     table.concat({
@@ -133,6 +142,7 @@ local function getStatementsForPage (since, page)
 end
 
 local function refreshAvailableFunds (since)
+    print("Refreshing available funds")
     transactions = {}
 
     local json = JSON(connection:request("POST",
@@ -181,12 +191,14 @@ local function refreshAvailableFunds (since)
 end
 
 local function refreshInvestedFunds (since)
+    print("Refreshing invested funds")
     local page = 1
     local totalPages = 1000
 
     local securities = {}
 
     while page <= totalPages do
+        print("Loading page " .. page .. " of " .. totalPages)
         local json = JSON(connection:request("POST",
         "https://www.mintos.com/en/my-investments/list",
         table.concat({
